@@ -128,3 +128,41 @@ def load_note(path: Path) -> Note:
         body=body,
         mtime=path.stat().st_mtime,
     )
+
+WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
+
+def canon(s: str) -> str:
+    """Lowercase slug key: non-alphanumeric runs become '-', edges trimmed."""
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+
+CHECKS: list = []
+
+def register(fn):
+    CHECKS.append(fn)
+    return fn
+
+@register
+def check_wikilinks(ctx: LintContext) -> list[Finding]:
+    slugs = {n.slug for n in ctx.notes}
+    names = {n.frontmatter.get("name") for n in ctx.notes if n.frontmatter.get("name")}
+    known = {canon(x) for x in (slugs | names)}
+    out: list[Finding] = []
+    for n in ctx.notes:
+        for offset, line in enumerate(n.lines, start=1):
+            for m in WIKILINK_RE.finditer(line):
+                target = m.group(1).strip()
+                if canon(target) not in known:
+                    out.append(Finding(
+                        severity=Severity.WARN,
+                        check="wikilink",
+                        file=n.path.name,
+                        line=offset,
+                        message=f"dangling [[{target}]] (may be intentional - a note to write later.)"
+                    ))
+    return out
+
+def lint(ctx: LintContext) -> list[Finding]:
+    findings: list[Finding] = []
+    for check in CHECKS:
+        findings.extend(check(ctx))
+    return findings
